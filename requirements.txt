@@ -1,0 +1,15 @@
+streamlit>=1.40
+langchain>=0.3
+langchain-community>=0.3
+langchain-chroma>=0.2
+langchain-openai>=0.2
+langchain-huggingface>=0.1
+langchain-text-splitters>=0.3
+chromadb>=1.0
+sentence-transformers>=3.0
+pypdf>=5.0
+beautifulsoup4>=4.12
+python-dotenv>=1.0
+openai>=1.50
+transformers>=4.46
+torch>=2.2
