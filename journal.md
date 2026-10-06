@@ -37,3 +37,15 @@ The HTML loader now passes `bs_kwargs={"features": "html.parser"}`, which uses t
 Changing chunk size or overlap changes the vectors. Leaving both in the same Chroma collection would mix incompatible chunks and make retrieval scores meaningless.
 
 `Settings.collection_name` includes the chunk size and overlap (`docs_minilm_c1000_o200`). Re-indexing after a knob change writes a separate collection. Re-uploading the same filename deletes that file's previous chunks first, so a second index of the same report does not duplicate it.
+
+## The local model echoed the prompt
+
+With no `OPENAI_API_KEY`, a question about the sample report used `HuggingFaceTB/SmolLM2-135M-Instruct`. Retrieval was right: the Acme chunk was first. The model did answer "Acme Robotics Q3 revenue was $42 million," but the pipeline also returned the system prompt and the context, because the local chat template echoes the full text.
+
+`generate_answer` now keeps only the text after `<|im_start|>assistant`. The cited chunks are still shown separately in the app.
+
+## GitHub `main` already had a commit
+
+The feature branches pushed. `main` was rejected because the remote already had an initial commit whose README was one sentence: the project title and the one-line goal.
+
+That commit was merged into local `main` with `--allow-unrelated-histories`. The full README in this repo was kept, because it is the problem statement and the description of the pipeline. The one-line remote README is the ancestor of that file.

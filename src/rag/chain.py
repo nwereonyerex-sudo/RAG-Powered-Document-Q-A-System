@@ -89,8 +89,18 @@ def generate_answer(
     chain = prompt | llm | StrOutputParser()
     text = chain.invoke(
         {"context": format_context(documents), "question": question}
-    ).strip()
-    return text or REFUSAL
+    )
+    return _visible_answer(text) or REFUSAL
+
+
+def _visible_answer(text: str) -> str:
+    """Keep the assistant reply when a local chat model echoes the prompt."""
+    marker = "<|im_start|>assistant"
+    if marker in text:
+        text = text.rsplit(marker, 1)[-1]
+    if "<|im_end|>" in text:
+        text = text.split("<|im_end|>", 1)[0]
+    return text.strip()
 
 
 def ask(
