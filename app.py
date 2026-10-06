@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import sys
 from pathlib import Path
 
@@ -15,11 +16,221 @@ from rag.config import load_settings
 from rag.ingest import SUPPORTED
 from rag.store import index_directory, index_paths
 
-st.set_page_config(page_title="RAG Document Q&A", layout="wide")
-st.title("RAG-Powered Document Q&A")
-st.caption(
-    "Upload a paper, filing, report, or book. Ask in plain English. "
-    "The answer is limited to retrieved chunks, with the file and page beside it."
+st.set_page_config(page_title="RAG Document Q&A", layout="centered")
+
+KIND_COLOR = {
+    "text": "green",
+    "markdown": "violet",
+    "html": "amber",
+    "pdf": "rose",
+}
+
+PAGE_CSS = """
+<style>
+  .stApp { background: radial-gradient(1200px 500px at 10% -10%, #123524 0%, #070b14 42%); }
+  .block-container { max-width: 760px; }
+  .nk-hero, .nk-hero h1, .nk-hero p, .nk-card p, .nk-card h3 {
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  header[data-testid="stHeader"] { background: transparent; }
+  .stAppDeployButton, #MainMenu, footer { display: none; }
+  [data-testid="stChatMessage"] {
+    background: transparent;
+    border: 0;
+  }
+  [data-testid="stChatMessageAvatar"],
+  [data-testid="chatAvatarIcon-assistant"],
+  [data-testid="chatAvatarIcon-user"] { display: none !important; }
+  [data-testid="stChatMessage"] { width: 100%; }
+  .nk-answer, .nk-card, .nk-user, .nk-hero { box-sizing: border-box; width: 100%; }
+  [data-testid="stChatMessage"] pre,
+  [data-testid="stChatMessage"] code {
+    white-space: pre-wrap !important;
+    word-break: break-word;
+  }
+  .nk-hero {
+    margin: 0 0 1rem 0;
+    padding: 1.1rem 1.15rem 1rem;
+    border-radius: 18px;
+    background:
+      linear-gradient(135deg, rgba(34,197,94,0.22), rgba(236,72,153,0.12) 42%, rgba(34,211,238,0.12)),
+      #101826;
+    border: 1px solid rgba(34,197,94,0.45);
+    box-shadow: 0 16px 40px rgba(0,0,0,0.28);
+  }
+  .nk-kicker {
+    display: inline-block;
+    margin: 0 0 0.4rem 0;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    background: #22c55e;
+    color: #052e16;
+    font-size: 0.75rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .nk-hero h1 {
+    margin: 0;
+    color: #f8fafc;
+    font-size: 1.7rem;
+    line-height: 1.15;
+  }
+  .nk-hero p { margin: 0.45rem 0 0; color: #cbd5e1; }
+  .nk-user, .nk-answer, .nk-card {
+    border-radius: 16px;
+    padding: 0.9rem 1rem;
+    margin: 0.35rem 0 0.7rem;
+  }
+  .nk-user {
+    background: linear-gradient(90deg, #f59e0b, #f97316);
+    color: #1c1917;
+    font-weight: 700;
+  }
+  .nk-answer {
+    background: linear-gradient(180deg, #132033, #0e1726);
+    border: 1px solid rgba(34,197,94,0.55);
+    box-shadow: inset 4px 0 0 #22c55e;
+  }
+  .nk-label {
+    margin: 0 0 0.35rem;
+    color: #4ade80;
+    font-size: 0.75rem;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .nk-copy {
+    margin: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    line-height: 1.55;
+    color: #f8fafc;
+    font-family: "Segoe UI", sans-serif;
+  }
+  .nk-row-title {
+    margin: 0.2rem 0 0.45rem;
+    color: #e2e8f0;
+    font-size: 0.95rem;
+    font-weight: 800;
+  }
+  .nk-card { border: 1px solid transparent; }
+  .nk-green { background: #052e16; border-color: #22c55e; }
+  .nk-violet { background: #2e1064; border-color: #c084fc; }
+  .nk-amber { background: #451a03; border-color: #fbbf24; }
+  .nk-rose { background: #4c0519; border-color: #fb7185; }
+  .nk-card h3 { margin: 0.35rem 0; color: #fff; font-size: 1rem; overflow-wrap: anywhere; }
+  .nk-pill, .nk-page {
+    display: inline-block;
+    margin-right: 0.35rem;
+    padding: 0.12rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 800;
+  }
+  .nk-pill { background: #22c55e; color: #052e16; }
+  .nk-page { background: #0f172a; color: #e2e8f0; }
+  .nk-card p {
+    margin: 0;
+    color: #e2e8f0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    line-height: 1.5;
+  }
+  div[data-testid="stFileUploader"] {
+    background: #101826;
+    border: 1px dashed rgba(34,197,94,0.55);
+    border-radius: 16px;
+    padding: 0.4rem 0.6rem 0.2rem;
+  }
+</style>
+"""
+
+
+def tighten(text: str) -> str:
+    """Drop repeated lines so a looping local model cannot fill the screen."""
+    kept: list[str] = []
+    seen: set[str] = set()
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            if kept and kept[-1] != "":
+                kept.append("")
+            continue
+        key = " ".join(line.lower().split())
+        if key in seen:
+            continue
+        seen.add(key)
+        kept.append(line)
+    return "\n".join(kept).strip()
+
+
+def render_exchange(role: str, content: str, sources: list[dict] | None = None) -> None:
+    with st.chat_message(role):
+        if role == "user":
+            st.html(f'<div class="nk-user">{html.escape(content)}</div>')
+            return
+        answer = tighten(content)
+        blocks = [
+            '<article class="nk-answer">',
+            '<p class="nk-label">Answer</p>',
+            f'<p class="nk-copy">{html.escape(answer)}</p>',
+            "</article>",
+        ]
+        if sources:
+            blocks.append('<p class="nk-row-title">From the files</p>')
+            for source in sources:
+                kind = str(source.get("doc_type", "text"))
+                tone = KIND_COLOR.get(kind, "green")
+                raw_preview = source.get("preview") or source.get("text", "")
+                preview = " ".join(
+                    line.lstrip("#").strip()
+                    for line in str(raw_preview).splitlines()
+                    if line.strip()
+                )
+                blocks.append(
+                    f'<article class="nk-card nk-{tone}">'
+                    f'<span class="nk-pill">{html.escape(kind.upper())}</span>'
+                    f'<span class="nk-page">Page {int(source.get("page", 0)) + 1}</span>'
+                    f"<h3>{html.escape(str(source.get('source', 'document')))}</h3>"
+                    f"<p>{html.escape(preview)}</p>"
+                    "</article>"
+                )
+        st.html("".join(blocks))
+
+
+def source_cards(documents) -> list[dict]:
+    cards = []
+    for document in documents:
+        lines = []
+        for line in tighten(document.page_content).splitlines():
+            cleaned = line.lstrip("#").strip()
+            if cleaned:
+                lines.append(cleaned)
+        cards.append(
+            {
+                "source": document.metadata.get("source", "document"),
+                "doc_type": document.metadata.get("doc_type", "text"),
+                "page": int(document.metadata.get("page", 0) or 0),
+                "preview": " ".join(lines)[:420],
+            }
+        )
+    return cards
+
+
+st.markdown(PAGE_CSS, unsafe_allow_html=True)
+st.markdown(
+    """
+    <section class="nk-hero">
+      <p class="nk-kicker">Now showing</p>
+      <h1>RAG Document Q&amp;A</h1>
+      <p>Upload a paper, filing, report, or book. Ask in plain English. The answer stays on the file, with the passage beside it.</p>
+    </section>
+    """,
+    unsafe_allow_html=True,
 )
 
 
@@ -86,25 +297,18 @@ elif limit_to_latest and len(st.session_state.indexed_names) > 1:
     source_filter = st.selectbox("Limit search to", st.session_state.indexed_names)
 
 for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+    render_exchange(message["role"], message["content"], message.get("sources"))
 
 question = st.chat_input("Ask a question about the indexed documents")
 if question:
     st.session_state.messages.append({"role": "user", "content": question})
-    with st.chat_message("user"):
-        st.markdown(question)
-    with st.chat_message("assistant"):
-        try:
-            result = ask(question, settings, source_filter=source_filter)
-            st.markdown(result.text)
-            with st.expander("Retrieved chunks"):
-                for document in result.sources:
-                    page = int(document.metadata.get("page", 0)) + 1
-                    st.markdown(
-                        f"**{document.metadata.get('source')}** · page {page} · {document.metadata.get('doc_type')}"
-                    )
-                    st.text(document.page_content)
-            st.session_state.messages.append({"role": "assistant", "content": result.text})
-        except Exception as exc:
-            st.error(str(exc))
+    render_exchange("user", question)
+    try:
+        result = ask(question, settings, source_filter=source_filter)
+        cards = source_cards(result.sources)
+        st.session_state.messages.append(
+            {"role": "assistant", "content": result.text, "sources": cards}
+        )
+        render_exchange("assistant", result.text, cards)
+    except Exception as exc:
+        st.error(str(exc))
