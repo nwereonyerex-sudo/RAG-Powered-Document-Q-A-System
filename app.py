@@ -16,7 +16,7 @@ from rag.config import load_settings
 from rag.ingest import SUPPORTED
 from rag.store import index_directory, index_paths, list_sources
 
-st.set_page_config(page_title="RAG Document Q&A", layout="centered")
+st.set_page_config(page_title="CV Review for a Job Role", layout="centered")
 
 KIND_COLOR = {
     "text": "green",
@@ -225,9 +225,9 @@ st.markdown(PAGE_CSS, unsafe_allow_html=True)
 st.markdown(
     """
     <section class="nk-hero">
-      <p class="nk-kicker">Now showing</p>
-      <h1>RAG Document Q&amp;A</h1>
-      <p>Upload a paper, filing, report, or book. Ask in plain English. The answer stays on the file, with the passage beside it.</p>
+      <p class="nk-kicker">CV review</p>
+      <h1>Improve your CV for a role</h1>
+      <p>Upload a CV. Name the job. The app reads the whole file, then tells you what it contains, how to change it for that role, and what to expect in the job.</p>
     </section>
     """,
     unsafe_allow_html=True,

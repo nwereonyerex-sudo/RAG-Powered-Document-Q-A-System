@@ -44,6 +44,26 @@ With no `OPENAI_API_KEY`, a question about the sample report used `HuggingFaceTB
 
 `generate_answer` now keeps only the text after `<|im_start|>assistant`. The cited chunks are still shown separately in the app.
 
+## Uploaded files were invisible to search
+
+After a CV was uploaded, every question came back as "I cannot find that in the uploaded documents."
+
+Three things caused that:
+
+1. The file picker only held the file in the browser. Nothing was written to the Chroma index until **Index documents** was clicked, and that click was easy to miss. `data/raw/` still contained only an earlier copy of a form, not the CV the user had just selected.
+2. **Also index the bundled samples** was on by default. Retrieval therefore returned the sample report, the sample filing, and the sample paper. The prompt tells the model to refuse when the retrieved text does not contain the answer, so the refusal was correct for those samples and useless for the CV.
+3. Even after the CV was indexed (4 pages, 13 chunks), a question about the whole file only received the top 4 chunks. A summary or an improvement pass cannot be done from a fragment.
+
+A separate PDF, a W-8BEN form, made the same sentence inevitable for another reason. `PyPDFLoader` extracted 1 page and 0 characters. The letters are drawn as vector shapes, not stored as text, and the file has no form fields. There was nothing to embed.
+
+The running Streamlit process then failed with `ImportError: cannot import name 'describe_document' from 'rag.chain'` after that function was added. The process had loaded `rag.chain` at startup and kept the old module in memory. Restarting the app loaded the new function. A direct import of `describe_document` succeeded.
+
+What changed:
+
+- Selecting a file indexes it immediately. Samples are off unless the user opts in.
+- A PDF with no selectable text raises a clear error instead of storing zero chunks and pretending the search worked.
+- `describe_document` and `review_cv_for_role` read every chunk of the chosen file. The role review returns what the CV shows, how to edit it for that job, and what to expect in the role. The last section is general knowledge about the job, not new facts inserted into the CV.
+
 ## GitHub `main` already had a commit
 
 The feature branches pushed. `main` was rejected because the remote already had an initial commit whose README was one sentence: the project title and the one-line goal.
