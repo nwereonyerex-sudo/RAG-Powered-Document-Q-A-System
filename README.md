@@ -1,6 +1,6 @@
 # RAG-Powered Document Q&A System
 
-Upload a CV and a job description. The app reads both files and acts as an editor: what the posting asks for, what the CV already covers, what to write in each section, and the steps to make the edit. A job title still works when there is no posting. Follow-up questions stay tied to the files. Under the page is a retrieval-augmented generation pipeline: loaders and a text splitter, a persistent vector database, and an LLM, orchestrated with LangChain.
+The app has two separate pages. **Document Q&A** uploads a paper, filing, report, or book and answers from the retrieved passages. **CV & Job Match** reads a CV against a job description, marks each requirement met, partial, or missing, and will not turn a related line into a skill the CV does not name. Under both pages is a retrieval-augmented generation pipeline: loaders and a text splitter, a persistent vector database, and an LLM, orchestrated with LangChain.
 
 RAG is the dominant pattern for production LLM applications in 2025–2026. A full pipeline shows how embeddings, chunking, and retrieval quality fit together, and how generation is deployed on top of a store rather than trained from scratch. LangChain, vector databases, and LLM orchestration now show up together in ML engineering roles. This repo is one project that uses all three, on a CV and on the other files people ask questions about: research papers, company reports, books, and legislation.
 
@@ -22,30 +22,34 @@ The pipeline is split so retrieval can be tuned without rewriting the model call
 2. **Index.** [`src/rag/store.py`](src/rag/store.py) embeds chunks with `sentence-transformers/all-MiniLM-L6-v2` and stores them in persistent Chroma. The collection name includes chunk size and overlap, so a new splitter setting does not reuse old vectors.
 3. **Retrieve.** The same module searches with maximum marginal relevance (diverse chunks) or plain similarity, optionally limited to one file.
 4. **Answer.** [`src/rag/chain.py`](src/rag/chain.py) puts only the retrieved chunks in a normal question. If they do not contain the answer, the model is told to say so.
-5. **Review.** The same module can read the whole file. **Describe this file** explains the content and how to make the writing stronger. **Improve this CV for the role** takes a job title and returns what the CV shows, edits aimed at that role, and what to expect in the job. **Guide my CV from this job description** reads the uploaded posting and the CV together. It lists what the posting asks for, what the CV already shows, what to write in each section, and the editing steps. Suggested lines are fill-in templates. The model does not invent employers, dates, or achievements.
-6. **Use.** [`app.py`](app.py) is a Streamlit app: upload a CV, upload the job description or type a role, read the guide, then ask a follow-up. Retrieval knobs stay in the sidebar.
-7. **Check.** [`scripts/eval_retrieval.py`](scripts/eval_retrieval.py) asks three questions against the bundled samples and fails if the expected fact is missing from the top chunks.
+5. **Document Q&A.** [`frontend/views/document_qa.py`](frontend/views/document_qa.py) asks questions over the index. A question about the whole file can read every chunk of that file. This page does not score a CV.
+6. **CV & Job Match.** [`backend/services/`](backend/services/) extracts requirements, retrieves CV chunks for each one, and [`evidence_validator.py`](backend/services/evidence_validator.py) blocks unsupported claims. A CV line about REST APIs can be a partial match for FastAPI. The suggestion tells the candidate to add FastAPI only if they have used it, and to keep the REST API line otherwise.
+7. **Use.** [`frontend/streamlit_app.py`](frontend/streamlit_app.py) opens the two pages separately. Retrieval knobs stay in the sidebar of each page.
+8. **Check.** [`scripts/eval_retrieval.py`](scripts/eval_retrieval.py) asks three questions against the bundled samples. [`evaluation/benchmark.py`](evaluation/benchmark.py) checks that a CV quote used in a match is actually in the CV, and that a partial skill is not claimed as present.
 
 ```mermaid
 flowchart LR
-  upload[Upload_CV] --> loaders[Loaders_PDF_TXT_HTML]
+  upload[Upload] --> loaders[Loaders_PDF_TXT_HTML]
   loaders --> chunk[Recursive_splitter]
   chunk --> embed[MiniLM_embeddings]
   embed --> chroma[Chroma_persist]
-  role[Job_role_or_JD] --> review[Whole_file_review]
-  chroma --> review
-  review --> brief[What_to_input_and_how_to_edit]
-  question[Follow_up_question] --> retriever[Retriever]
+  question[Document_question] --> retriever[Retriever]
   chroma --> retriever
   retriever --> answer[Grounded_answer]
+  jd[Job_description] --> requirements[Requirement_extractor]
+  chroma --> cvretriever[CV_retriever]
+  requirements --> cvretriever
+  cvretriever --> validator[Evidence_validator]
+  validator --> match[Met_partial_or_missing]
 ```
 
 | Piece | Where it lives |
 | --- | --- |
 | LangChain loaders, splitter, prompt, and chain | [`src/rag/ingest.py`](src/rag/ingest.py), [`src/rag/chain.py`](src/rag/chain.py) |
 | Vector database | [`src/rag/store.py`](src/rag/store.py) |
-| LLM provider switch, grounded answers, role review, and job-description guide | [`src/rag/chain.py`](src/rag/chain.py) |
-| Retrieval knobs and a repeatable check | [`app.py`](app.py), [`scripts/eval_retrieval.py`](scripts/eval_retrieval.py) |
+| Document Q&A page | [`frontend/views/document_qa.py`](frontend/views/document_qa.py) |
+| Requirement match and evidence check | [`backend/services/`](backend/services/) |
+| Retrieval knobs and checks | [`app.py`](app.py), [`scripts/eval_retrieval.py`](scripts/eval_retrieval.py), [`evaluation/benchmark.py`](evaluation/benchmark.py) |
 
 ## A fault found in use
 
@@ -83,7 +87,13 @@ source .venv/bin/activate
 streamlit run app.py
 ```
 
-Upload a PDF, TXT, Markdown, or HTML CV, and upload the job description in the second box. Each file is indexed when you select it. Click **Guide my CV from this job description**. The reply says what the posting asks for, what the CV already covers, what to input in each section, and the steps to edit the CV. With only the posting, the same button is a drafting guide. Type a job role and click **Improve this CV for the role** when you do not have the posting. **Describe this file and how to improve it** reviews one document on its own. A PDF with no selectable text is reported instead of being treated as an empty search.
+**Document Q&A** indexes a PDF, TXT, Markdown, or HTML file when you select it, then answers from the retrieved passages. **CV & Job Match** takes a CV and a job description and lists each requirement with the CV line that supports it. A PDF with no selectable text is reported instead of being treated as an empty search.
+
+The matching API, for callers other than the page:
+
+```bash
+uvicorn backend.main:app --reload
+```
 
 Check retrieval without calling the LLM:
 
@@ -115,12 +125,15 @@ Switch search to similarity when you want the nearest chunks only. A score thres
 ## Layout
 
 ```
-app.py                      Streamlit upload, chat, citations, knobs
-src/rag/config.py           Chunking, retrieval, and provider settings
-src/rag/ingest.py           PDF, text, and HTML loaders
-src/rag/store.py            Chroma index and retriever
-src/rag/chain.py            Grounded answers, full-file review, role review, and job-description guide
-scripts/eval_retrieval.py   Retrieval check against samples/
-samples/                    Small report, filing, and paper
-journal.md                  Issues hit during the build
+app.py                              Streamlit entry for the two pages
+frontend/streamlit_app.py           Same entry, under frontend/
+frontend/views/document_qa.py       Upload, questions, citations
+frontend/views/cv_job_match.py      Requirement match against a CV
+backend/main.py                     FastAPI app for CV matching
+backend/services/                   Parser, retriever, matcher, evidence check
+src/rag/                            Shared loaders, Chroma index, grounded answers
+evaluation/benchmark.py             Checks quotes and unsupported skill claims
+scripts/eval_retrieval.py           Retrieval check against samples/
+samples/                            Small report, filing, and paper
+journal.md                          Issues hit during the build
 ```

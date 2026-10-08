@@ -64,6 +64,12 @@ What changed:
 - A PDF with no selectable text raises a clear error instead of storing zero chunks and pretending the search worked.
 - `describe_document` and `review_cv_for_role` read every chunk of the chosen file. The role review returns what the CV shows, how to edit it for that job, and what to expect in the role. The last section is general knowledge about the job, not new facts inserted into the CV.
 
+## Document questions and CV matching were one page
+
+The same screen uploaded a CV, accepted a job title, and also answered questions about filings and papers. A requirement match needs a different result from a grounded answer: each job requirement, the CV line that supports it, and a suggestion that does not invent a skill.
+
+The Streamlit app now has two pages. Document Q&A keeps the index, the grounded prompt, and the citations. CV & Job Match extracts requirements and checks each one against retrieved CV text. If the CV says REST APIs and the posting asks for FastAPI, the match stays partial and the suggestion keeps the REST API line unless the candidate has actually used FastAPI.
+
 ## A job title is not the posting
 
 Naming a role produced general advice about that job. It could not tell the candidate which lines in a specific posting to answer, or what to type into the CV.

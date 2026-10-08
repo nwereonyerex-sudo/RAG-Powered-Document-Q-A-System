@@ -1,4 +1,7 @@
 streamlit>=1.40
+fastapi>=0.115
+uvicorn>=0.32
+python-multipart>=0.0.12
 langchain>=0.3
 langchain-community>=0.3
 langchain-chroma>=0.2
