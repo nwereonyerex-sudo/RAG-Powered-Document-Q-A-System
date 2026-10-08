@@ -11,7 +11,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
 from rag.config import Settings
-from rag.store import retrieve
+from rag.store import chunks_for_source, retrieve
 
 SYSTEM_PROMPT = """You are a document analyst. Answer the question using only the context.
 
@@ -101,6 +101,121 @@ def _visible_answer(text: str) -> str:
     if "<|im_end|>" in text:
         text = text.split("<|im_end|>", 1)[0]
     return text.strip()
+
+
+REVIEW_PROMPT = """You are reviewing one uploaded document. Read the whole document below.
+
+Write exactly two sections with these headings:
+
+Content
+Explain what the document is and what it contains. Cover the whole document in plain English. Use only facts written in the document.
+
+How to make it better
+Give specific changes that would make this document clearer or stronger. For each suggestion, name the part of the document it applies to. Do not invent jobs, dates, numbers, or credentials that are not in the document.
+
+Document:
+{context}
+"""
+
+
+def describe_document(
+    settings: Settings,
+    source_name: str,
+    llm: BaseChatModel | None = None,
+) -> Answer:
+    """Summarize one whole file and suggest how to improve it."""
+    context, documents = _document_context(settings, source_name)
+    if not documents:
+        return Answer(
+            text=f"{source_name} is not in the index, so there is no content to review.",
+            sources=[],
+        )
+    model = llm or build_llm(settings)
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", REVIEW_PROMPT),
+            ("human", "Review this document."),
+        ]
+    )
+    text = _visible_answer(
+        (prompt | model | StrOutputParser()).invoke({"context": context})
+    )
+    return Answer(text=text or REFUSAL, sources=documents[:1])
+
+
+ROLE_PROMPT = """You are a CV editor. The candidate's CV is below. The target job is: {role}
+
+Write exactly three sections with these headings:
+
+What this CV shows
+Summarize the experience, skills, and education written in the CV. Do not add employers, dates, or credentials that are not in the CV.
+
+How to improve this CV for this role
+Give specific edits: what to add, cut, reorder, or rephrase so the CV speaks to this job. Name the part of the CV each suggestion refers to. If a skill this role usually needs is missing, say it is missing. Do not invent jobs or achievements.
+
+What to expect in this role
+Describe the typical day-to-day work, skills, and interview topics for this job. This section is general knowledge about the role, not facts from the CV. Keep it concrete.
+
+CV:
+{context}
+"""
+
+
+def _document_context(settings: Settings, source_name: str) -> tuple[str, list[Document]]:
+    documents = chunks_for_source(settings, source_name)
+    context = format_context(documents)
+    if len(context) > 24000:
+        context = context[:24000] + "\n\n[The rest of the file was cut for length.]"
+    return context, documents
+
+
+def review_cv_for_role(
+    settings: Settings,
+    source_name: str,
+    role: str,
+    llm: BaseChatModel | None = None,
+) -> Answer:
+    """Review a CV against one job and describe what that job involves."""
+    role = " ".join(role.split())
+    if not role:
+        return Answer(text="Type a job role first.", sources=[])
+    context, documents = _document_context(settings, source_name)
+    if not documents:
+        return Answer(
+            text=f"{source_name} is not in the index, so the CV cannot be reviewed.",
+            sources=[],
+        )
+    model = llm or build_llm(settings)
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", ROLE_PROMPT),
+            ("human", "Review this CV for the role."),
+        ]
+    )
+    text = _visible_answer(
+        (prompt | model | StrOutputParser()).invoke({"context": context, "role": role})
+    )
+    return Answer(text=text or REFUSAL, sources=documents[:1])
+
+
+def wants_document_review(question: str) -> bool:
+    normalized = " ".join(question.lower().split())
+    cues = (
+        "content",
+        "what is this",
+        "what is the file",
+        "what's in",
+        "whats in",
+        "summar",
+        "about this",
+        "about the file",
+        "about the document",
+        "make it better",
+        "make this better",
+        "improve",
+        "how to make",
+    )
+    return any(cue in normalized for cue in cues)
 
 
 def ask(

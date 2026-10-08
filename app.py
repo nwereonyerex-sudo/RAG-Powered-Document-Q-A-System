@@ -11,10 +11,10 @@ sys.path.insert(0, str(ROOT / "src"))
 
 import streamlit as st
 
-from rag.chain import ask
+from rag.chain import ask, describe_document, review_cv_for_role, wants_document_review
 from rag.config import load_settings
 from rag.ingest import SUPPORTED
-from rag.store import index_directory, index_paths
+from rag.store import index_directory, index_paths, list_sources
 
 st.set_page_config(page_title="RAG Document Q&A", layout="centered")
 
@@ -263,7 +263,7 @@ uploads = st.file_uploader(
     type=["pdf", "txt", "md", "html", "htm"],
     accept_multiple_files=True,
 )
-include_samples = st.checkbox("Also index the bundled samples", value=True)
+include_samples = st.checkbox("Also index the bundled samples", value=False)
 limit_to_latest = st.checkbox("Search only the files indexed in this session", value=False)
 
 if "messages" not in st.session_state:
@@ -271,21 +271,42 @@ if "messages" not in st.session_state:
 if "indexed_names" not in st.session_state:
     st.session_state.indexed_names = []
 
+def index_selection() -> int:
+    settings.raw_dir.mkdir(parents=True, exist_ok=True)
+    saved: list[Path] = []
+    for upload in uploads or []:
+        destination = settings.raw_dir / Path(upload.name).name
+        destination.write_bytes(upload.getvalue())
+        saved.append(destination)
+    if not saved and not include_samples:
+        raise ValueError("Choose a file first, then index it.")
+    count = index_paths(saved, settings) if saved else 0
+    names = [path.name for path in saved]
+    if include_samples:
+        count += index_directory(ROOT / "samples", settings)
+        names.extend(
+            path.name
+            for path in (ROOT / "samples").iterdir()
+            if path.suffix.lower() in SUPPORTED
+        )
+    st.session_state.indexed_names = names
+    st.session_state.upload_signature = tuple(
+        (upload.name, upload.size) for upload in (uploads or [])
+    )
+    return count
+
+
+upload_signature = tuple((upload.name, upload.size) for upload in (uploads or []))
+if upload_signature and upload_signature != st.session_state.get("upload_signature"):
+    try:
+        count = index_selection()
+        st.success(f"Indexed {', '.join(st.session_state.indexed_names)} ({count} chunks).")
+    except Exception as exc:
+        st.error(str(exc))
+
 if st.button("Index documents", type="primary"):
     try:
-        settings.raw_dir.mkdir(parents=True, exist_ok=True)
-        saved: list[Path] = []
-        for upload in uploads or []:
-            destination = settings.raw_dir / Path(upload.name).name
-            destination.write_bytes(upload.getvalue())
-            saved.append(destination)
-        count = index_paths(saved, settings) if saved else 0
-        if include_samples:
-            count += index_directory(ROOT / "samples", settings)
-        names = [path.name for path in saved]
-        if include_samples:
-            names.extend(path.name for path in (ROOT / "samples").iterdir() if path.suffix.lower() in SUPPORTED)
-        st.session_state.indexed_names = names
+        count = index_selection()
         st.success(f"Stored {count} chunks in `{settings.collection_name}`.")
     except Exception as exc:
         st.error(str(exc))
@@ -296,6 +317,66 @@ if limit_to_latest and len(st.session_state.indexed_names) == 1:
 elif limit_to_latest and len(st.session_state.indexed_names) > 1:
     source_filter = st.selectbox("Limit search to", st.session_state.indexed_names)
 
+sample_names = {
+    path.name
+    for path in (ROOT / "samples").iterdir()
+    if path.suffix.lower() in SUPPORTED
+}
+known_names = st.session_state.indexed_names or list_sources(settings)
+review_names = [name for name in known_names if name not in sample_names] or known_names
+review_file = None
+if len(review_names) == 1:
+    review_file = review_names[0]
+elif review_names:
+    review_file = st.selectbox("File to review", review_names, index=len(review_names) - 1)
+
+
+def show_answer(question: str, result) -> None:
+    cards = source_cards(result.sources)
+    st.session_state.messages.append(
+        {"role": "assistant", "content": result.text, "sources": cards}
+    )
+    render_exchange("assistant", result.text, cards)
+
+
+job_role = st.text_input(
+    "Job role",
+    placeholder="Data analyst, staff nurse, frontend developer",
+)
+
+
+def remember(question: str, result) -> None:
+    st.session_state.messages.append({"role": "user", "content": question})
+    st.session_state.messages.append(
+        {
+            "role": "assistant",
+            "content": result.text,
+            "sources": source_cards(result.sources),
+        }
+    )
+
+
+if review_file and st.button("Describe this file and how to improve it"):
+    try:
+        remember(
+            f"Describe {review_file} and how to make it better.",
+            describe_document(settings, review_file),
+        )
+    except Exception as exc:
+        st.error(str(exc))
+
+if review_file and st.button("Improve this CV for the role", type="primary"):
+    try:
+        if not job_role.strip():
+            st.error("Type the job role first.")
+        else:
+            remember(
+                f"How should {review_file} change for a {job_role.strip()} role, and what does that job involve?",
+                review_cv_for_role(settings, review_file, job_role),
+            )
+    except Exception as exc:
+        st.error(str(exc))
+
 for message in st.session_state.messages:
     render_exchange(message["role"], message["content"], message.get("sources"))
 
@@ -304,11 +385,17 @@ if question:
     st.session_state.messages.append({"role": "user", "content": question})
     render_exchange("user", question)
     try:
-        result = ask(question, settings, source_filter=source_filter)
-        cards = source_cards(result.sources)
-        st.session_state.messages.append(
-            {"role": "assistant", "content": result.text, "sources": cards}
+        target = source_filter or review_file
+        role_question = any(
+            word in question.lower()
+            for word in ("role", "job", "cv", "resume", "expect", "interview")
         )
-        render_exchange("assistant", result.text, cards)
+        if target and job_role.strip() and role_question:
+            result = review_cv_for_role(settings, target, job_role)
+        elif wants_document_review(question) and target:
+            result = describe_document(settings, target)
+        else:
+            result = ask(question, settings, source_filter=source_filter or target)
+        show_answer(question, result)
     except Exception as exc:
         st.error(str(exc))

@@ -39,6 +39,11 @@ def load_file(path: Path) -> list[Document]:
 
     if suffix == ".pdf":
         documents = PyPDFLoader(str(path)).load()
+        if not any(document.page_content.strip() for document in documents):
+            raise ValueError(
+                f"{path.name} has no selectable text. "
+                "Scanned or drawn PDFs cannot be searched until the text is copied out."
+            )
     elif suffix in {".html", ".htm"}:
         documents = BSHTMLLoader(
             str(path),
