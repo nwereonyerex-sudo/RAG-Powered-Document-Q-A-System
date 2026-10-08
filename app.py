@@ -11,10 +11,17 @@ sys.path.insert(0, str(ROOT / "src"))
 
 import streamlit as st
 
-from rag.chain import ask, describe_document, review_cv_for_role, wants_document_review
+from rag.chain import (
+    ask,
+    describe_document,
+    guide_cv_from_job_description,
+    review_cv_for_role,
+    wants_document_review,
+    wants_job_description_guide,
+)
 from rag.config import load_settings
 from rag.ingest import SUPPORTED
-from rag.store import index_directory, index_paths, list_sources
+from rag.store import chunks_for_source, index_directory, index_paths, list_sources
 
 st.set_page_config(page_title="CV Review for a Job Role", layout="centered")
 
@@ -227,7 +234,7 @@ st.markdown(
     <section class="nk-hero">
       <p class="nk-kicker">CV review</p>
       <h1>Improve your CV for a role</h1>
-      <p>Upload a CV. Name the job. The app reads the whole file, then tells you what it contains, how to change it for that role, and what to expect in the job.</p>
+      <p>Upload your CV and the job description. The app reads both, then shows what the job asks for, what your CV already covers, what to write in each section, and the steps to edit it. A job title still works when you do not have the posting.</p>
     </section>
     """,
     unsafe_allow_html=True,
@@ -258,10 +265,18 @@ with st.sidebar:
 settings = _settings()
 st.sidebar.code(settings.collection_name, language="text")
 
-uploads = st.file_uploader(
-    "Upload PDF, TXT, Markdown, or HTML",
+cv_upload = st.file_uploader(
+    "Your CV",
     type=["pdf", "txt", "md", "html", "htm"],
-    accept_multiple_files=True,
+    accept_multiple_files=False,
+    key="cv_file",
+)
+jd_upload = st.file_uploader(
+    "Job description",
+    type=["pdf", "txt", "md", "html", "htm"],
+    accept_multiple_files=False,
+    key="jd_file",
+    help="Upload the posting. The guide uses it to say what to put in the CV.",
 )
 include_samples = st.checkbox("Also index the bundled samples", value=False)
 limit_to_latest = st.checkbox("Search only the files indexed in this session", value=False)
@@ -271,15 +286,21 @@ if "messages" not in st.session_state:
 if "indexed_names" not in st.session_state:
     st.session_state.indexed_names = []
 
-def index_selection() -> int:
+def save_upload(upload) -> Path | None:
+    if upload is None:
+        return None
     settings.raw_dir.mkdir(parents=True, exist_ok=True)
-    saved: list[Path] = []
-    for upload in uploads or []:
-        destination = settings.raw_dir / Path(upload.name).name
-        destination.write_bytes(upload.getvalue())
-        saved.append(destination)
+    destination = settings.raw_dir / Path(upload.name).name
+    destination.write_bytes(upload.getvalue())
+    return destination
+
+
+def index_selection() -> int:
+    saved = [path for path in (save_upload(cv_upload), save_upload(jd_upload)) if path]
+    if cv_upload and jd_upload and Path(cv_upload.name).name == Path(jd_upload.name).name:
+        raise ValueError("Give the CV and the job description different file names.")
     if not saved and not include_samples:
-        raise ValueError("Choose a file first, then index it.")
+        raise ValueError("Choose a CV or a job description first.")
     count = index_paths(saved, settings) if saved else 0
     names = [path.name for path in saved]
     if include_samples:
@@ -290,21 +311,29 @@ def index_selection() -> int:
             if path.suffix.lower() in SUPPORTED
         )
     st.session_state.indexed_names = names
-    st.session_state.upload_signature = tuple(
-        (upload.name, upload.size) for upload in (uploads or [])
+    st.session_state.cv_name = Path(cv_upload.name).name if cv_upload else None
+    st.session_state.jd_name = Path(jd_upload.name).name if jd_upload else None
+    st.session_state.upload_signature = (
+        None if cv_upload is None else (cv_upload.name, cv_upload.size),
+        None if jd_upload is None else (jd_upload.name, jd_upload.size),
+        include_samples,
     )
     return count
 
 
-upload_signature = tuple((upload.name, upload.size) for upload in (uploads or []))
-if upload_signature and upload_signature != st.session_state.get("upload_signature"):
+upload_signature = (
+    None if cv_upload is None else (cv_upload.name, cv_upload.size),
+    None if jd_upload is None else (jd_upload.name, jd_upload.size),
+    include_samples,
+)
+if any(upload_signature[:2]) and upload_signature != st.session_state.get("upload_signature"):
     try:
         count = index_selection()
         st.success(f"Indexed {', '.join(st.session_state.indexed_names)} ({count} chunks).")
     except Exception as exc:
         st.error(str(exc))
 
-if st.button("Index documents", type="primary"):
+if st.button("Index documents"):
     try:
         count = index_selection()
         st.success(f"Stored {count} chunks in `{settings.collection_name}`.")
@@ -324,10 +353,12 @@ sample_names = {
 }
 known_names = st.session_state.indexed_names or list_sources(settings)
 review_names = [name for name in known_names if name not in sample_names] or known_names
-review_file = None
-if len(review_names) == 1:
+cv_name = st.session_state.get("cv_name")
+jd_name = st.session_state.get("jd_name")
+review_file = cv_name if cv_name in review_names else None
+if review_file is None and len(review_names) == 1:
     review_file = review_names[0]
-elif review_names:
+elif review_file is None and review_names:
     review_file = st.selectbox("File to review", review_names, index=len(review_names) - 1)
 
 
@@ -365,7 +396,7 @@ if review_file and st.button("Describe this file and how to improve it"):
     except Exception as exc:
         st.error(str(exc))
 
-if review_file and st.button("Improve this CV for the role", type="primary"):
+if review_file and st.button("Improve this CV for the role"):
     try:
         if not job_role.strip():
             st.error("Type the job role first.")
@@ -373,6 +404,25 @@ if review_file and st.button("Improve this CV for the role", type="primary"):
             remember(
                 f"How should {review_file} change for a {job_role.strip()} role, and what does that job involve?",
                 review_cv_for_role(settings, review_file, job_role),
+            )
+    except Exception as exc:
+        st.error(str(exc))
+
+if st.button("Guide my CV from this job description", type="primary"):
+    try:
+        if not jd_name:
+            st.error("Upload a job description first.")
+        elif cv_name and not chunks_for_source(settings, cv_name):
+            st.error(f"{cv_name} is not in the index yet.")
+        else:
+            label = (
+                f"Use {jd_name} to guide {cv_name}: what to input and how to edit it."
+                if cv_name
+                else f"Use {jd_name} as a guide for what to put in a CV."
+            )
+            remember(
+                label,
+                guide_cv_from_job_description(settings, jd_name, cv_name),
             )
     except Exception as exc:
         st.error(str(exc))
@@ -390,7 +440,9 @@ if question:
             word in question.lower()
             for word in ("role", "job", "cv", "resume", "expect", "interview")
         )
-        if target and job_role.strip() and role_question:
+        if jd_name and wants_job_description_guide(question):
+            result = guide_cv_from_job_description(settings, jd_name, cv_name or target)
+        elif target and job_role.strip() and role_question:
             result = review_cv_for_role(settings, target, job_role)
         elif wants_document_review(question) and target:
             result = describe_document(settings, target)

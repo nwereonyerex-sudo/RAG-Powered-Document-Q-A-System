@@ -64,6 +64,12 @@ What changed:
 - A PDF with no selectable text raises a clear error instead of storing zero chunks and pretending the search worked.
 - `describe_document` and `review_cv_for_role` read every chunk of the chosen file. The role review returns what the CV shows, how to edit it for that job, and what to expect in the role. The last section is general knowledge about the job, not new facts inserted into the CV.
 
+## A job title is not the posting
+
+Naming a role produced general advice about that job. It could not tell the candidate which lines in a specific posting to answer, or what to type into the CV.
+
+The CV box and the job-description box are now separate. **Guide my CV from this job description** reads every chunk of both files. The reply has four parts: what the posting asks for, what the CV already covers, what to input in each section, and a step-by-step edit. Fill-in lines use blanks. The model is told not to invent employers, dates, or achievements. If only the posting is uploaded, the same button is a drafting guide.
+
 ## GitHub `main` already had a commit
 
 The feature branches pushed. `main` was rejected because the remote already had an initial commit whose README was one sentence: the project title and the one-line goal.
