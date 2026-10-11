@@ -63,6 +63,24 @@ def build_llm(settings: Settings) -> BaseChatModel:
 
         return ChatOpenAI(model=settings.openai_model, temperature=0)
 
+    if provider == "perplexity":
+        api_key = os.getenv("PERPLEXITY_API_KEY", "").strip()
+        if not api_key:
+            raise RuntimeError(
+                "PERPLEXITY_API_KEY is not set. Add it to .env or choose another LLM."
+            )
+        from langchain_openai import ChatOpenAI
+
+        # The Agent API answers from the prompt when no web_search tool is attached.
+        return ChatOpenAI(
+            model=settings.perplexity_model,
+            api_key=api_key,
+            base_url="https://api.perplexity.ai/v1",
+            temperature=0,
+            use_responses_api=True,
+            model_kwargs={"max_tool_calls": 0},
+        )
+
     from langchain_huggingface import ChatHuggingFace, HuggingFacePipeline
 
     chat_pipeline = HuggingFacePipeline.from_model_id(

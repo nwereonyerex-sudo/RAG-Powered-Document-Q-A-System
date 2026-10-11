@@ -242,7 +242,12 @@ def retrieval_sidebar(prefix: str):
             step=0.05,
             key=f"{prefix}_score_threshold",
         )
-        st.selectbox("LLM", options=["auto", "openai", "local"], key=f"{prefix}_llm_provider")
+        st.selectbox(
+            "LLM",
+            options=["auto", "openai", "perplexity", "local"],
+            key=f"{prefix}_llm_provider",
+        )
+        st.caption("auto uses Perplexity when PERPLEXITY_API_KEY is set, otherwise OpenAI, otherwise the local model.")
     return load_settings(
         chunk_size=int(st.session_state[f"{prefix}_chunk_size"]),
         chunk_overlap=int(st.session_state[f"{prefix}_chunk_overlap"]),

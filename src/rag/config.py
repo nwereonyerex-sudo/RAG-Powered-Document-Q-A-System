@@ -35,6 +35,7 @@ class Settings:
     score_threshold: float = 0.0
     llm_provider: str = "auto"
     openai_model: str = "gpt-4o-mini"
+    perplexity_model: str = "perplexity/sonar"
     local_model: str = "HuggingFaceTB/SmolLM2-135M-Instruct"
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     chroma_dir: Path = ROOT / "data" / "chroma"
@@ -49,8 +50,8 @@ class Settings:
             raise ValueError("top_k must be at least 1.")
         if self.search_type not in {"mmr", "similarity"}:
             raise ValueError("search_type must be 'mmr' or 'similarity'.")
-        if self.llm_provider not in {"auto", "openai", "local"}:
-            raise ValueError("llm_provider must be 'auto', 'openai', or 'local'.")
+        if self.llm_provider not in {"auto", "openai", "perplexity", "local"}:
+            raise ValueError("llm_provider must be 'auto', 'openai', 'perplexity', or 'local'.")
         self.chroma_dir = Path(self.chroma_dir)
         self.raw_dir = Path(self.raw_dir)
 
@@ -62,8 +63,12 @@ class Settings:
     def resolve_provider(self) -> str:
         if self.llm_provider == "openai":
             return "openai"
+        if self.llm_provider == "perplexity":
+            return "perplexity"
         if self.llm_provider == "local":
             return "local"
+        if os.getenv("PERPLEXITY_API_KEY", "").strip():
+            return "perplexity"
         if os.getenv("OPENAI_API_KEY", "").strip():
             return "openai"
         return "local"
@@ -78,6 +83,7 @@ def load_settings(**overrides: object) -> Settings:
         score_threshold=_env_float("SCORE_THRESHOLD", 0.0),
         llm_provider=os.getenv("LLM_PROVIDER", "auto"),
         openai_model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+        perplexity_model=os.getenv("PERPLEXITY_MODEL", "perplexity/sonar"),
         local_model=os.getenv("LOCAL_MODEL", "HuggingFaceTB/SmolLM2-135M-Instruct"),
         embedding_model=os.getenv(
             "EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"

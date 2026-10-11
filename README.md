@@ -78,7 +78,7 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Set `OPENAI_API_KEY` in `.env` for `gpt-4o-mini`. Leave the key empty and the app uses the local Hugging Face model named in `LOCAL_MODEL`. Embeddings stay local either way, so indexing does not need an API key.
+Set `PERPLEXITY_API_KEY` in `.env` to call Perplexity's Agent API (`perplexity/sonar`) with no web search, so answers stay on the retrieved text. Otherwise set `OPENAI_API_KEY` for `gpt-4o-mini`. Leave both keys empty and the app uses the local Hugging Face model named in `LOCAL_MODEL`. Embeddings stay local either way, so indexing does not need an API key.
 
 ## Run
 
